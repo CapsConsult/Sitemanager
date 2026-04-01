@@ -1,0 +1,418 @@
+.page {
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 214, 153, 0.32), transparent 28%),
+    linear-gradient(180deg, #f5efe3 0%, #efe6d6 40%, #e6dcc9 100%);
+  color: #1f2933;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1440px;
+  margin: 0 auto 24px;
+  padding: 28px;
+  border: 1px solid rgba(99, 74, 44, 0.14);
+  border-radius: 28px;
+  background: rgba(255, 250, 241, 0.9);
+  box-shadow: 0 18px 50px rgba(73, 52, 28, 0.12);
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #8b5e34;
+}
+
+.hero h1 {
+  max-width: 14ch;
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.05em;
+}
+
+.heroText {
+  max-width: 60ch;
+  margin-top: 14px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #5e6873;
+}
+
+.heroActions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: min(100%, 240px);
+}
+
+.primaryAction,
+.secondaryAction,
+.pinListItem,
+.photoRemove {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.primaryAction,
+.secondaryAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    background-color 140ms ease;
+}
+
+.primaryAction {
+  background: linear-gradient(135deg, #ba6a2b 0%, #8b4a1a 100%);
+  color: #fff9f0;
+  box-shadow: 0 12px 30px rgba(139, 74, 26, 0.25);
+}
+
+.primaryAction:hover,
+.secondaryAction:hover,
+.pinListItem:hover,
+.photoRemove:hover {
+  transform: translateY(-1px);
+}
+
+.primaryAction input {
+  display: none;
+}
+
+.secondaryAction {
+  border: 1px solid rgba(99, 74, 44, 0.14);
+  background: rgba(255, 250, 241, 0.7);
+  color: #6a5440;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 24px;
+  max-width: 1440px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.panel,
+.errorPanel,
+.viewerEmpty,
+.pageCard {
+  border: 1px solid rgba(99, 74, 44, 0.14);
+  border-radius: 24px;
+  background: rgba(255, 250, 241, 0.9);
+  box-shadow: 0 10px 26px rgba(73, 52, 28, 0.08);
+}
+
+.panel,
+.errorPanel,
+.viewerEmpty {
+  padding: 20px;
+}
+
+.panel h2,
+.viewerEmpty h2 {
+  font-size: 1.05rem;
+  letter-spacing: -0.03em;
+}
+
+.panelHint,
+.emptyState,
+.selectedMeta,
+.pageHint,
+.viewerEmpty p,
+.errorPanel p {
+  margin-top: 10px;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: #68727c;
+}
+
+.metaList {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.metaList div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(99, 74, 44, 0.08);
+}
+
+.metaList dt {
+  color: #68727c;
+}
+
+.metaList dd {
+  text-align: right;
+  font-weight: 700;
+}
+
+.panelHeader,
+.pageHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panelHeader span,
+.pageBadge,
+.pageHint {
+  font-size: 0.82rem;
+}
+
+.pageBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(186, 106, 43, 0.1);
+  color: #8b4a1a;
+  font-weight: 700;
+}
+
+.pinList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.pinListItem {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(248, 241, 229, 0.92);
+  color: #1f2933;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.pinListItemActive {
+  background: #f6d9ba;
+}
+
+.photoGrid {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.photoCard {
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fffdf8;
+  border: 1px solid rgba(99, 74, 44, 0.12);
+}
+
+.photoPreviewWrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #e8dcc5;
+}
+
+.photoPreview {
+  object-fit: cover;
+}
+
+.photoMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+}
+
+.photoMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photoRemove {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #efe6d6;
+  color: #6a5440;
+}
+
+.errorPanel {
+  color: #842029;
+  background: rgba(255, 239, 239, 0.92);
+}
+
+.viewer {
+  min-width: 0;
+}
+
+.viewerEmpty {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.pageStack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pageCard {
+  padding: 16px;
+}
+
+.pageFrame {
+  margin-top: 12px;
+}
+
+.pageSurface {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(251, 247, 239, 0.95), rgba(246, 238, 223, 0.95));
+}
+
+.pageCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pinLayer {
+  position: absolute;
+  inset: 0;
+}
+
+.pinButton {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px 999px 999px 0;
+  background: #ba6a2b;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  transform: translate(-20%, -90%) rotate(-45deg);
+  box-shadow: 0 8px 16px rgba(139, 74, 26, 0.28);
+}
+
+.pinButton::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 999px;
+  background: rgba(255, 249, 240, 0.28);
+}
+
+.pinButtonActive {
+  background: #23384d;
+}
+
+.pinButtonActive::before {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.pinButton {
+  display: grid;
+  place-items: center;
+}
+
+.pageStatus,
+.pageStatusError {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(31, 41, 51, 0.78);
+  color: #fff;
+  font-size: 0.82rem;
+}
+
+.pageStatusError {
+  background: rgba(132, 32, 41, 0.88);
+}
+
+@media (max-width: 980px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero h1 {
+    max-width: none;
+  }
+
+  .heroActions {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 14px;
+  }
+
+  .hero,
+  .panel,
+  .errorPanel,
+  .viewerEmpty,
+  .pageCard {
+    border-radius: 20px;
+  }
+
+  .hero {
+    padding: 20px;
+  }
+
+  .pageHeading,
+  .panelHeader,
+  .photoMeta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pinButton {
+    width: 28px;
+    height: 28px;
+    font-size: 0.72rem;
+  }
+}

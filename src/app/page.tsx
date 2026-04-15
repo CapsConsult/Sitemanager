@@ -2,9 +2,13 @@
 
 import {
   ChangeEvent,
+  CSSProperties,
   MouseEvent,
   PointerEvent as ReactPointerEvent,
+  TouchEvent as ReactTouchEvent,
   useEffect,
+  useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -107,6 +111,8 @@ const DB_NAME = "site-manager-mvp";
 const DB_VERSION = 1;
 const FILE_STORE = "project-files";
 const PDF_FILE_KEY = "project-pdf";
+const MAX_ZOOM = 100;
+const APP_VERSION = "2026.04.14-smooth-zoom-r4";
 const EMPTY_PROJECT: StoredProject = { pdfName: "", hasPdf: false, pins: [], spaces: [] };
 const SPACE_STATUS_STYLES: Record<SpaceStatus, SpaceStyle> = {
   free: { fill: "rgba(53,135,78,.18)", border: "rgba(53,135,78,.72)", text: "#2c6c41" },
@@ -270,31 +276,117 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const renderTaskRef = useRef<import("pdfjs-dist").RenderTask | null>(null);
   const suppressClickRef = useRef(false);
-  const pendingZoomAnchorRef = useRef<{ zoom: number; relativeX: number; relativeY: number; offsetX: number; offsetY: number } | null>(null);
+  const renderZoomRef = useRef(zoom);
+  const zoomRef = useRef(zoom);
+  const previousZoomRef = useRef(zoom);
+  const mousePosRef = useRef<{ x: number; y: number } | null>(null);
+  const renderCommitAnchorRef = useRef<{ relativeX: number; relativeY: number; pointerX: number; pointerY: number } | null>(null);
+  const scrollRerenderBlockUntilRef = useRef(0);
   const interactionRef = useRef<{ type: "pan"; pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean } | null>(null);
   const [aspectRatio, setAspectRatio] = useState(1.414);
+  const [renderedZoom, setRenderedZoom] = useState(zoom);
+  const [debouncedRenderZoom, setDebouncedRenderZoom] = useState(zoom);
+  const [panRenderVersion, setPanRenderVersion] = useState(0);
   const [isRendering, setIsRendering] = useState(true);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [draftSpace, setDraftSpace] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const frameWidth = Math.max(availableWidth, 280);
 
   const baseHeight = frameWidth * aspectRatio;
+  const viewportHeight = frameWidth * 0.7;
   const scaledWidth = frameWidth * zoom;
   const scaledHeight = baseHeight * zoom;
+  const renderedWidth = frameWidth * renderedZoom;
+  const renderedHeight = baseHeight * renderedZoom;
+  const canvasScale = renderedZoom > 0 ? zoom / renderedZoom : 1;
+
+  const clampScroll = (value: number, max: number) => Math.max(0, Math.min(value, Math.max(0, max)));
+  const blockScrollRerender = (durationMs = 260) => {
+    scrollRerenderBlockUntilRef.current = Date.now() + durationMs;
+  };
+  const getViewportPointer = () => {
+    const viewport = viewportRef.current;
+    if (!viewport) return { x: 0, y: 0 };
+    const fallback = { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 };
+    const pointer = mousePosRef.current ?? fallback;
+    return {
+      x: Math.max(0, Math.min(pointer.x, viewport.clientWidth)),
+      y: Math.max(0, Math.min(pointer.y, viewport.clientHeight)),
+    };
+  };
+  const updateMousePos = (clientX: number, clientY: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const bounds = viewport.getBoundingClientRect();
+    mousePosRef.current = {
+      x: Math.max(0, Math.min(clientX - bounds.left, viewport.clientWidth)),
+      y: Math.max(0, Math.min(clientY - bounds.top, viewport.clientHeight)),
+    };
+  };
 
   useEffect(() => {
-    const pendingAnchor = pendingZoomAnchorRef.current;
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    renderZoomRef.current = renderedZoom;
+  }, [renderedZoom]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedRenderZoom(zoom), 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [zoom]);
+
+  useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    if (!pendingAnchor || !viewport || pendingAnchor.zoom !== zoom) return;
-    viewport.scrollLeft = pendingAnchor.relativeX * scaledWidth - pendingAnchor.offsetX;
-    viewport.scrollTop = pendingAnchor.relativeY * scaledHeight - pendingAnchor.offsetY;
-    pendingZoomAnchorRef.current = null;
-  }, [scaledHeight, scaledWidth, zoom]);
+    const previousZoom = previousZoomRef.current;
+    if (!viewport || previousZoom === zoom) return;
+
+    const pointer = getViewportPointer();
+    const previousWidth = frameWidth * previousZoom;
+    const previousHeight = baseHeight * previousZoom;
+    const relativeX = previousWidth > 0 ? clamp01((viewport.scrollLeft + pointer.x) / previousWidth) : 0;
+    const relativeY = previousHeight > 0 ? clamp01((viewport.scrollTop + pointer.y) / previousHeight) : 0;
+
+    blockScrollRerender();
+    viewport.scrollLeft = clampScroll(relativeX * scaledWidth - pointer.x, scaledWidth - viewport.clientWidth);
+    viewport.scrollTop = clampScroll(relativeY * scaledHeight - pointer.y, scaledHeight - viewport.clientHeight);
+    previousZoomRef.current = zoom;
+  }, [baseHeight, frameWidth, scaledHeight, scaledWidth, zoom]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const anchor = renderCommitAnchorRef.current;
+    if (!viewport || !anchor) return;
+
+    const currentCssScale = renderedZoom > 0 ? zoom / renderedZoom : 1;
+    const currentVisualWidth = frameWidth * renderedZoom * currentCssScale;
+    const currentVisualHeight = baseHeight * renderedZoom * currentCssScale;
+
+    blockScrollRerender();
+    viewport.scrollLeft = clampScroll(anchor.relativeX * currentVisualWidth - anchor.pointerX, currentVisualWidth - viewport.clientWidth);
+    viewport.scrollTop = clampScroll(anchor.relativeY * currentVisualHeight - anchor.pointerY, currentVisualHeight - viewport.clientHeight);
+    renderCommitAnchorRef.current = null;
+  }, [baseHeight, frameWidth, renderedZoom, zoom]);
 
   useEffect(() => {
     let cancelled = false;
     async function renderPage() {
-      if (!canvasRef.current || !frameWidth) return;
+      const canvas = canvasRef.current;
+      const viewportElement = viewportRef.current;
+      if (!canvas || !viewportElement || !frameWidth) return;
+      const targetZoom = zoomRef.current;
+      const pointer = getViewportPointer();
+      const currentRenderedZoom = renderZoomRef.current || 1;
+      const currentCssScale = currentRenderedZoom > 0 ? zoomRef.current / currentRenderedZoom : 1;
+      const currentVisualWidth = frameWidth * currentRenderedZoom * currentCssScale;
+      const currentVisualHeight = baseHeight * currentRenderedZoom * currentCssScale;
+      const anchor = {
+        relativeX: currentVisualWidth > 0 ? clamp01((viewportElement.scrollLeft + pointer.x) / currentVisualWidth) : 0,
+        relativeY: currentVisualHeight > 0 ? clamp01((viewportElement.scrollTop + pointer.y) / currentVisualHeight) : 0,
+        pointerX: pointer.x,
+        pointerY: pointer.y,
+      };
       try {
         setIsRendering(true); setRenderError(null);
         renderTaskRef.current?.cancel();
@@ -304,18 +396,37 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
         const nextAspectRatio = baseViewport.height / baseViewport.width;
         setAspectRatio(nextAspectRatio);
         const pixelRatio = window.devicePixelRatio || 1;
-        const viewport = page.getViewport({ scale: (scaledWidth / baseViewport.width) * pixelRatio });
-        const canvas = canvasRef.current;
+        const renderZoom = Math.min(targetZoom, 6);
+        const fullPageRenderScale = (frameWidth * renderZoom / baseViewport.width) * pixelRatio;
+        const viewport = page.getViewport({ scale: fullPageRenderScale });
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Canvas rendering is unavailable.");
+        const canvasWidth = Math.max(1, Math.ceil(viewport.width));
+        const canvasHeight = Math.max(1, Math.ceil(viewport.height));
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
-        canvas.width = viewport.width; canvas.height = viewport.height;
-        canvas.style.width = `${scaledWidth}px`; canvas.style.height = `${scaledWidth * nextAspectRatio}px`;
-        const renderTask = page.render({ canvas, canvasContext: context, viewport });
+        canvas.width = canvasWidth; canvas.height = canvasHeight;
+        const renderTask = page.render({
+          canvas,
+          canvasContext: context,
+          viewport,
+        });
         renderTaskRef.current = renderTask;
         await renderTask.promise;
-        if (!cancelled) setIsRendering(false);
+        if (!cancelled) {
+          if (zoomRef.current !== targetZoom) {
+            setIsRendering(false);
+            return;
+          }
+          if (renderZoomRef.current !== targetZoom) {
+            renderCommitAnchorRef.current = anchor;
+            renderZoomRef.current = targetZoom;
+            setRenderedZoom(targetZoom);
+          } else {
+            renderCommitAnchorRef.current = null;
+          }
+          setIsRendering(false);
+        }
       } catch (error) {
         if (error instanceof Error && error.name === "RenderingCancelledException") return;
         if (!cancelled) {
@@ -329,34 +440,53 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
       cancelled = true;
       renderTaskRef.current?.cancel();
     };
-  }, [frameWidth, pageNumber, pdfDocument, scaledWidth]);
+  }, [baseHeight, debouncedRenderZoom, frameWidth, pageNumber, panRenderVersion, pdfDocument]);
 
   const getRelativePoint = (event: ReactPointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     return { x: clamp01((event.clientX - bounds.left) / bounds.width), y: clamp01((event.clientY - bounds.top) / bounds.height) };
   };
-  const handleViewportWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+  const handleViewportWheel = useEffectEvent((event: WheelEvent) => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     event.preventDefault();
     event.stopPropagation();
-    const bounds = viewport.getBoundingClientRect();
-    const offsetX = event.clientX - bounds.left;
-    const offsetY = event.clientY - bounds.top;
-    const contentX = viewport.scrollLeft + offsetX;
-    const contentY = viewport.scrollTop + offsetY;
-    const relativeX = scaledWidth > 0 ? contentX / scaledWidth : 0;
-    const relativeY = scaledHeight > 0 ? contentY / scaledHeight : 0;
-    const nextZoom = Math.min(10, Math.max(0.5, Number((zoom * Math.exp(-event.deltaY * 0.0015)).toFixed(2))));
+    updateMousePos(event.clientX, event.clientY);
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(0.5, Number((zoom * Math.exp(-event.deltaY * 0.0015)).toFixed(2))));
     if (nextZoom === zoom) return;
-    pendingZoomAnchorRef.current = {
-      zoom: nextZoom,
-      relativeX: clamp01(relativeX),
-      relativeY: clamp01(relativeY),
-      offsetX,
-      offsetY,
-    };
     onZoomChange(nextZoom);
+  });
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const handleWheel = (event: WheelEvent) => handleViewportWheel(event);
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    let timeoutId: number | null = null;
+    const handleScroll = () => {
+      if (Date.now() < scrollRerenderBlockUntilRef.current) return;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        if (Date.now() < scrollRerenderBlockUntilRef.current) return;
+        if (zoomRef.current !== debouncedRenderZoom) return;
+        setPanRenderVersion((current) => current + 1);
+      }, 200);
+    };
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, [debouncedRenderZoom]);
+
+  const handleSurfaceMouseMove = (event: MouseEvent<HTMLDivElement>) => {
+    updateMousePos(event.clientX, event.clientY);
   };
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
     if (suppressClickRef.current) { suppressClickRef.current = false; return; }
@@ -365,6 +495,7 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
     onAddPin(pageNumber, point.x, point.y);
   };
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    updateMousePos(event.clientX, event.clientY);
     if (event.button !== 0) return;
     if (panEnabled && zoom > 1 && viewportRef.current) {
       interactionRef.current = {
@@ -385,6 +516,7 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    updateMousePos(event.clientX, event.clientY);
     const interaction = interactionRef.current;
     if (interaction?.type === "pan" && interaction.pointerId === event.pointerId && viewportRef.current) {
       const deltaX = event.clientX - interaction.startX;
@@ -401,7 +533,13 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
     const point = getRelativePoint(event);
     setDraftSpace((current) => current ? { ...current, currentX: point.x, currentY: point.y } : current);
   };
+  const handleTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    updateMousePos(touch.clientX, touch.clientY);
+  };
   const finishDraftSpace = (event: ReactPointerEvent<HTMLDivElement>) => {
+    updateMousePos(event.clientX, event.clientY);
     const interaction = interactionRef.current;
     if (interaction?.type === "pan" && interaction.pointerId === event.pointerId) {
       interactionRef.current = null;
@@ -422,6 +560,14 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
     width: `${Math.abs(draftSpace.currentX - draftSpace.startX) * 100}%`,
     height: `${Math.abs(draftSpace.currentY - draftSpace.startY) * 100}%`,
   } : null;
+  const canvasStyle: CSSProperties = {
+    left: "0",
+    top: "0",
+    width: `${renderedWidth}px`,
+    height: `${renderedHeight}px`,
+    transform: canvasScale === 1 ? "none" : `scale(${canvasScale})`,
+    transformOrigin: "0 0",
+  };
 
   return (
     <section className={styles.pageCard}>
@@ -433,12 +579,11 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
         <div
           ref={viewportRef}
           className={styles.pageViewport}
-          onWheel={handleViewportWheel}
-          style={{ width: `${frameWidth}px`, height: `${Math.max(baseHeight, 240)}px` }}
+          style={{ width: `${frameWidth}px`, height: `${viewportHeight}px` }}
         >
           <div className={styles.pageFrame} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
-            <div className={`${styles.pageSurface} ${mode === "spaces" ? styles.pageSurfaceDraw : ""} ${panEnabled && zoom > 1 ? styles.pageSurfacePan : ""}`} onClick={handleCanvasClick} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDraftSpace} onPointerCancel={() => { interactionRef.current = null; setDraftSpace(null); }} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
-              <canvas ref={canvasRef} className={styles.pageCanvas} />
+            <div className={`${styles.pageSurface} ${mode === "spaces" ? styles.pageSurfaceDraw : ""} ${panEnabled && zoom > 1 ? styles.pageSurfacePan : ""}`} onClick={handleCanvasClick} onMouseMove={handleSurfaceMouseMove} onTouchMove={handleTouchMove} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDraftSpace} onPointerCancel={() => { interactionRef.current = null; setDraftSpace(null); }} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
+              <canvas ref={canvasRef} className={styles.pageCanvas} style={canvasStyle} />
               <div className={styles.spaceLayer}>
                 {spaces.map((space, index) => {
                   const palette = SPACE_STATUS_STYLES[space.status];
@@ -722,7 +867,10 @@ export default function Home() {
     <main className={styles.page}>
       <section className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>Site Manager MVP</p>
+          <div className={styles.heroMeta}>
+            <p className={styles.eyebrow}>Site Manager MVP</p>
+            <span className={styles.versionBadge}>Build {APP_VERSION}</span>
+          </div>
           <h1>Pin work and mark spaces on the same drawing.</h1>
           <p className={styles.heroText}>
             Upload one PDF, switch between pin tracking and room/layer overlays, and keep the
@@ -779,6 +927,10 @@ export default function Home() {
                 <dd>{project.pdfName || "Not loaded"}</dd>
               </div>
               <div>
+                <dt>Build</dt>
+                <dd>{APP_VERSION}</dd>
+              </div>
+              <div>
                 <dt>Pins</dt>
                 <dd>{project.pins.length}</dd>
               </div>
@@ -823,8 +975,8 @@ export default function Home() {
                 <button
                   type="button"
                   className={styles.zoomButton}
-                  onClick={() => setZoom((current) => Math.min(10, Number((current + 0.25).toFixed(2))))}
-                  disabled={zoom >= 10}
+                  onClick={() => setZoom((current) => Math.min(MAX_ZOOM, Number((current + 0.25).toFixed(2))))}
+                  disabled={zoom >= MAX_ZOOM}
                   aria-label="Zoom in"
                 >
                   +

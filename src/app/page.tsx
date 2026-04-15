@@ -283,6 +283,11 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
   const renderCommitAnchorRef = useRef<{ relativeX: number; relativeY: number; pointerX: number; pointerY: number } | null>(null);
   const scrollRerenderBlockUntilRef = useRef(0);
   const interactionRef = useRef<{ type: "pan"; pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean } | null>(null);
+  const touchInteractionRef = useRef<
+    | { type: "pan"; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean }
+    | { type: "pinch"; initialDistance: number; initialZoom: number; anchorRelativeX: number; anchorRelativeY: number }
+    | null
+  >(null);
   const [aspectRatio, setAspectRatio] = useState(1.414);
   const [renderedZoom, setRenderedZoom] = useState(zoom);
   const [debouncedRenderZoom, setDebouncedRenderZoom] = useState(zoom);
@@ -322,6 +327,17 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
       x: Math.max(0, Math.min(clientX - bounds.left, viewport.clientWidth)),
       y: Math.max(0, Math.min(clientY - bounds.top, viewport.clientHeight)),
     };
+  };
+  const getTouchDistance = (touches: ReactTouchEvent<HTMLDivElement>["touches"]) => {
+    if (touches.length < 2) return 0;
+    const [firstTouch, secondTouch] = [touches[0], touches[1]];
+    const deltaX = secondTouch.clientX - firstTouch.clientX;
+    const deltaY = secondTouch.clientY - firstTouch.clientY;
+    return Math.hypot(deltaX, deltaY);
+  };
+  const getTouchMidpoint = (touches: ReactTouchEvent<HTMLDivElement>["touches"]) => {
+    const [firstTouch, secondTouch] = [touches[0], touches[1]];
+    return { x: (firstTouch.clientX + secondTouch.clientX) / 2, y: (firstTouch.clientY + secondTouch.clientY) / 2 };
   };
 
   useEffect(() => {
@@ -496,6 +512,7 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
   };
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     updateMousePos(event.clientX, event.clientY);
+    if (event.pointerType === "touch" && zoom > 1) return;
     if (event.button !== 0) return;
     if (panEnabled && zoom > 1 && viewportRef.current) {
       interactionRef.current = {
@@ -517,6 +534,7 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
   };
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     updateMousePos(event.clientX, event.clientY);
+    if (event.pointerType === "touch" && zoom > 1) return;
     const interaction = interactionRef.current;
     if (interaction?.type === "pan" && interaction.pointerId === event.pointerId && viewportRef.current) {
       const deltaX = event.clientX - interaction.startX;
@@ -533,13 +551,85 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
     const point = getRelativePoint(event);
     setDraftSpace((current) => current ? { ...current, currentX: point.x, currentY: point.y } : current);
   };
+  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (event.touches.length === 2) {
+      const distance = getTouchDistance(event.touches);
+      if (!distance) return;
+      const midpoint = getTouchMidpoint(event.touches);
+      const bounds = viewport.getBoundingClientRect();
+      const midpointX = Math.max(0, Math.min(midpoint.x - bounds.left, viewport.clientWidth));
+      const midpointY = Math.max(0, Math.min(midpoint.y - bounds.top, viewport.clientHeight));
+      const currentZoom = zoomRef.current;
+      const currentWidth = frameWidth * currentZoom;
+      const currentHeight = baseHeight * currentZoom;
+      touchInteractionRef.current = {
+        type: "pinch",
+        initialDistance: distance,
+        initialZoom: currentZoom,
+        anchorRelativeX: currentWidth > 0 ? clamp01((viewport.scrollLeft + midpointX) / currentWidth) : 0,
+        anchorRelativeY: currentHeight > 0 ? clamp01((viewport.scrollTop + midpointY) / currentHeight) : 0,
+      };
+      updateMousePos(midpoint.x, midpoint.y);
+      event.preventDefault();
+      return;
+    }
+    if (event.touches.length !== 1 || zoom <= 1) return;
+    const touch = event.touches[0];
+    touchInteractionRef.current = {
+      type: "pan",
+      startX: touch.clientX,
+      startY: touch.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+      moved: false,
+    };
+    updateMousePos(touch.clientX, touch.clientY);
+  };
   const handleTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (event.touches.length === 2) {
+      const interaction = touchInteractionRef.current;
+      if (!interaction || interaction.type !== "pinch") return;
+      const distance = getTouchDistance(event.touches);
+      if (!distance || !interaction.initialDistance) return;
+      const midpoint = getTouchMidpoint(event.touches);
+      const bounds = viewport.getBoundingClientRect();
+      const midpointX = Math.max(0, Math.min(midpoint.x - bounds.left, viewport.clientWidth));
+      const midpointY = Math.max(0, Math.min(midpoint.y - bounds.top, viewport.clientHeight));
+      const ratio = distance / interaction.initialDistance;
+      const nextZoom = Math.min(10, Math.max(0.5, Number((interaction.initialZoom * ratio).toFixed(2))));
+      const nextWidth = frameWidth * nextZoom;
+      const nextHeight = baseHeight * nextZoom;
+      blockScrollRerender();
+      viewport.scrollLeft = clampScroll(interaction.anchorRelativeX * nextWidth - midpointX, nextWidth - viewport.clientWidth);
+      viewport.scrollTop = clampScroll(interaction.anchorRelativeY * nextHeight - midpointY, nextHeight - viewport.clientHeight);
+      updateMousePos(midpoint.x, midpoint.y);
+      onZoomChange(nextZoom);
+      event.preventDefault();
+      return;
+    }
     const touch = event.touches[0];
     if (!touch) return;
     updateMousePos(touch.clientX, touch.clientY);
+    const interaction = touchInteractionRef.current;
+    if (event.touches.length !== 1 || !interaction || interaction.type !== "pan" || zoom <= 1) return;
+    const deltaX = touch.clientX - interaction.startX;
+    const deltaY = touch.clientY - interaction.startY;
+    if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+      interaction.moved = true;
+      suppressClickRef.current = true;
+    }
+    viewport.scrollLeft = interaction.scrollLeft - deltaX;
+    viewport.scrollTop = interaction.scrollTop - deltaY;
+    event.preventDefault();
   };
+  const handleTouchEnd = () => { touchInteractionRef.current = null; };
   const finishDraftSpace = (event: ReactPointerEvent<HTMLDivElement>) => {
     updateMousePos(event.clientX, event.clientY);
+    if (event.pointerType === "touch" && zoom > 1) return;
     const interaction = interactionRef.current;
     if (interaction?.type === "pan" && interaction.pointerId === event.pointerId) {
       interactionRef.current = null;
@@ -582,7 +672,7 @@ function PageCanvas({ mode, pdfDocument, pageNumber, zoom, panEnabled, available
           style={{ width: `${frameWidth}px`, height: `${viewportHeight}px` }}
         >
           <div className={styles.pageFrame} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
-            <div className={`${styles.pageSurface} ${mode === "spaces" ? styles.pageSurfaceDraw : ""} ${panEnabled && zoom > 1 ? styles.pageSurfacePan : ""}`} onClick={handleCanvasClick} onMouseMove={handleSurfaceMouseMove} onTouchMove={handleTouchMove} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDraftSpace} onPointerCancel={() => { interactionRef.current = null; setDraftSpace(null); }} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
+            <div className={`${styles.pageSurface} ${mode === "spaces" ? styles.pageSurfaceDraw : ""} ${panEnabled && zoom > 1 ? styles.pageSurfacePan : ""}`} onClick={handleCanvasClick} onMouseMove={handleSurfaceMouseMove} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchEnd} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDraftSpace} onPointerCancel={() => { interactionRef.current = null; touchInteractionRef.current = null; setDraftSpace(null); }} style={{ width: `${scaledWidth}px`, minHeight: `${Math.max(scaledHeight, 240)}px` }}>
               <canvas ref={canvasRef} className={styles.pageCanvas} style={canvasStyle} />
               <div className={styles.spaceLayer}>
                 {spaces.map((space, index) => {

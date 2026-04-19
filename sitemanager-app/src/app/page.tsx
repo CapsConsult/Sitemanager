@@ -9,11 +9,7 @@ import {
   useState,
 } from "react";
 import Image from "next/image";
-import {
-  GlobalWorkerOptions,
-  getDocument,
-  type PDFDocumentProxy,
-} from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import styles from "./page.module.css";
 
 type PhotoAttachment = {
@@ -42,6 +38,7 @@ type PageCanvasProps = {
   pageNumber: number;
   pins: Pin[];
   selectedPinId: string | null;
+  isPinMode: boolean;
   onAddPin: (pageNumber: number, x: number, y: number) => void;
   onSelectPin: (pinId: string) => void;
 };
@@ -52,13 +49,6 @@ const EMPTY_PROJECT: StoredProject = {
   pdfDataUrl: "",
   pins: [],
 };
-
-if (typeof window !== "undefined") {
-  GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
-}
 
 function createId() {
   return crypto.randomUUID();
@@ -77,7 +67,7 @@ async function imageFileToDataUrl(file: File) {
   const fileDataUrl = await readFileAsDataUrl(file);
 
   return new Promise<string>((resolve, reject) => {
-    const image = new Image();
+    const image = new window.Image();
     image.onload = () => {
       const maxDimension = 1600;
       const scale = Math.min(maxDimension / image.width, maxDimension / image.height, 1);
@@ -111,6 +101,7 @@ function PageCanvas({
   pageNumber,
   pins,
   selectedPinId,
+  isPinMode,
   onAddPin,
   onSelectPin,
 }: PageCanvasProps) {
@@ -176,6 +167,7 @@ function PageCanvas({
         canvas.style.height = `${frameWidth * nextAspectRatio}px`;
 
         const renderTask = page.render({
+          canvas,
           canvasContext: context,
           viewport,
         });
@@ -202,6 +194,10 @@ function PageCanvas({
   }, [frameWidth, pageNumber, pdfDocument]);
 
   const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!isPinMode) {
+      return;
+    }
+
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width;
     const y = (event.clientY - bounds.top) / bounds.height;
@@ -212,7 +208,11 @@ function PageCanvas({
     <section className={styles.pageCard}>
       <div className={styles.pageHeading}>
         <span className={styles.pageBadge}>Page {pageNumber}</span>
-        <span className={styles.pageHint}>Tap anywhere on the sheet to place a pin.</span>
+        <span className={styles.pageHint}>
+          {isPinMode
+            ? "Pin mode is on. Tap anywhere on the sheet to place a pin."
+            : "Pin mode is off. Turn it on to place pins."}
+        </span>
       </div>
       <div className={styles.pageFrame} ref={frameRef}>
         <div
@@ -255,6 +255,49 @@ export default function Home() {
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [isPinMode, setIsPinMode] = useState(false);
+  const [getDocumentFn, setGetDocumentFn] = useState<
+    | ((source: { data: ArrayBuffer }) => { promise: Promise<PDFDocumentProxy> })
+    | null
+  >(null);
+  const [undoState, setUndoState] = useState<{
+    message: string;
+    undo: () => void;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPdfModule() {
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url,
+      ).toString();
+
+      if (!cancelled) {
+        setGetDocumentFn(() => pdfjs.getDocument);
+      }
+    }
+
+    void loadPdfModule();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!undoState) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setUndoState(null);
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [undoState]);
 
   useEffect(() => {
     try {
@@ -300,12 +343,16 @@ export default function Home() {
         return;
       }
 
+      if (!getDocumentFn) {
+        return;
+      }
+
       try {
         setIsLoadingPdf(true);
         setPdfError(null);
 
         const data = await fetch(project.pdfDataUrl).then((response) => response.arrayBuffer());
-        const loadingTask = getDocument({ data });
+        const loadingTask = getDocumentFn({ data });
         const document = await loadingTask.promise;
 
         if (!cancelled) {
@@ -332,7 +379,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [project.pdfDataUrl]);
+  }, [getDocumentFn, project.pdfDataUrl]);
 
   useEffect(() => {
     if (!selectedPinId) {
@@ -425,6 +472,12 @@ export default function Home() {
   };
 
   const removePin = (pinId: string) => {
+    const pinIndex = project.pins.findIndex((pin) => pin.id === pinId);
+    const pinToDelete = pinIndex >= 0 ? project.pins[pinIndex] : null;
+    if (!pinToDelete) {
+      return;
+    }
+
     setProject((current) => ({
       ...current,
       pins: current.pins.filter((pin) => pin.id !== pinId),
@@ -432,9 +485,28 @@ export default function Home() {
     if (selectedPinId === pinId) {
       setSelectedPinId(null);
     }
+
+    setUndoState({
+      message: "Pin deleted.",
+      undo: () => {
+        setProject((current) => {
+          const pins = [...current.pins];
+          pins.splice(pinIndex, 0, pinToDelete);
+          return { ...current, pins };
+        });
+        setSelectedPinId(pinToDelete.id);
+      },
+    });
   };
 
   const removePhoto = (pinId: string, photoId: string) => {
+    const pin = project.pins.find((entry) => entry.id === pinId);
+    const photoIndex = pin?.photos.findIndex((photo) => photo.id === photoId) ?? -1;
+    const photoToDelete = photoIndex >= 0 && pin ? pin.photos[photoIndex] : null;
+    if (!pin || !photoToDelete) {
+      return;
+    }
+
     setProject((current) => ({
       ...current,
       pins: current.pins.map((pin) =>
@@ -444,16 +516,42 @@ export default function Home() {
               photos: pin.photos.filter((photo) => photo.id !== photoId),
             }
           : pin,
-      ),
+        ),
     }));
+
+    setUndoState({
+      message: "Photo removed.",
+      undo: () => {
+        setProject((current) => ({
+          ...current,
+          pins: current.pins.map((entry) => {
+            if (entry.id !== pinId) {
+              return entry;
+            }
+
+            const photos = [...entry.photos];
+            photos.splice(photoIndex, 0, photoToDelete);
+            return { ...entry, photos };
+          }),
+        }));
+      },
+    });
   };
 
   const clearProject = () => {
+    const shouldClear = window.confirm(
+      "Clear the saved project? This removes the PDF, pins, and attached photos.",
+    );
+    if (!shouldClear) {
+      return;
+    }
+
     setProject(EMPTY_PROJECT);
     setSelectedPinId(null);
     setPdfDocument(null);
     setPageCount(0);
     setPdfError(null);
+    setUndoState(null);
   };
 
   const pinSummary = useMemo(
@@ -483,6 +581,14 @@ export default function Home() {
             <input type="file" accept="application/pdf" onChange={handlePdfUpload} />
             <span>{project.pdfDataUrl ? "Replace PDF" : "Upload PDF"}</span>
           </label>
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={() => setIsPinMode((current) => !current)}
+            aria-pressed={isPinMode}
+          >
+            Pin mode: {isPinMode ? "On" : "Off"}
+          </button>
           <button type="button" className={styles.secondaryAction} onClick={clearProject}>
             Clear saved project
           </button>
@@ -630,6 +736,7 @@ export default function Home() {
                     pageNumber={pageNumber}
                     pins={project.pins.filter((pin) => pin.pageNumber === pageNumber)}
                     selectedPinId={selectedPinId}
+                    isPinMode={isPinMode}
                     onAddPin={addPin}
                     onSelectPin={setSelectedPinId}
                   />
@@ -639,6 +746,21 @@ export default function Home() {
           ) : null}
         </section>
       </section>
+      {undoState ? (
+        <div className={styles.undoToast} role="status" aria-live="polite">
+          <span>{undoState.message}</span>
+          <button
+            type="button"
+            className={styles.undoAction}
+            onClick={() => {
+              undoState.undo();
+              setUndoState(null);
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }
